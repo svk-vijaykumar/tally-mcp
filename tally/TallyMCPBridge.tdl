@@ -1,0 +1,120 @@
+;; Tally MCP Bridge - runs write jobs queued by the tally-mcp server.
+;;
+;; Why this exists: on TallyPrime 7.2, saving an alteration (Accept Alter) from inside an HTTP
+;; request deadlocks the whole program (Windows: "tally.exe is not responding"). So the MCP
+;; server reads over HTTP as usual, but for a write it drops a job file into the queue folder
+;; and this timer runs the job in Tally's own flow, then writes a response file.
+;;
+;; Protocol (one job at a time; the MCP writes request.tmp then renames it to request.txt so
+;; this never reads a half-written file):
+;;   request.txt            line 1 job id, line 2 op, following lines op parameters
+;;   response_<id>.txt      line 1 job id, line 2 OK|ERROR, line 3 message, last line END
+;; The request is deleted BEFORE the job runs, so a job that fails or hangs is never re-run.
+;;
+;; Load: F1 > TDLs & Add-ons (or TDL= in tally.ini), then restart TallyPrime so System Start
+;; fires and starts the timer.
+
+[System: Formula]
+    ZZMcpQueueDir : "C:\TallyMCP\queue\"
+    ZZMcpReqFile  : @@ZZMcpQueueDir + "request.txt"
+
+[System: Events]
+    ZZMcpOnStart  : System Start : TRUE : Call : ZZMcpStartTimer
+    ZZMcpOnLoad   : Load Company : TRUE : Call : ZZMcpStartTimer
+    ZZMcpTimer    : TIMER        : TRUE : Call : ZZMcpTick
+
+[Function: ZZMcpStartTimer]
+    10 : Start Timer : "ZZMcpTimer" : 2
+
+[Function: ZZMcpTick]
+    Variable : vId     : String
+    Variable : vOp     : String
+    Variable : vP1     : String
+    Variable : vP2     : String
+    Variable : vP3     : String
+    Variable : vP4     : String
+    Variable : vStatus : String
+    Variable : vMsg    : String
+    Variable : vResp   : String
+    Variable : vSpec   : String
+    Variable : vIdx    : Number
+    Variable : vHit    : Number
+    Variable : vHitIdx : Number
+    Variable : vOK     : Logical
+
+    00 : If : NOT $$IsFileExists:@@ZZMcpReqFile
+    01 :     Return
+    02 : End If
+
+    10 : Open File : @@ZZMcpReqFile : Text : Read : UTF8
+    11 : Set : vId : $$FileReadRaw
+    12 : Set : vOp : $$FileReadRaw
+    13 : Set : vP1 : $$FileReadRaw
+    15 : Set : vP2 : $$FileReadRaw
+    16 : Set : vP3 : $$FileReadRaw
+    17 : Set : vP4 : $$FileReadRaw
+    18 : Close File
+    19 : Delete File : @@ZZMcpReqFile
+
+    20 : Set : vStatus : "ERROR"
+    21 : Set : vMsg    : "Unknown op '" + ##vOp + "'"
+
+    30 : If : ##vOp = "PING"
+    31 :     Set : vStatus : "OK"
+    32 :     Set : vMsg    : "pong; current company=" + ##SVCurrentCompany
+    33 : End If
+
+        ;; SWAPLEDGER  P1 company, P2 voucher MasterID, P3 ledger to replace, P4 new ledger.
+        ;; Changes the ledger on the ONE line using P3. Every check runs before the edit session
+        ;; is saved; leaving without Accept Alter discards the session, so a refused job writes
+        ;; nothing. (A failed Set Value would still commit on Accept Alter - see
+        ;; procedural-alteration-gotchas.md section 7 - so nothing risky runs before the checks.)
+    50 : If : ##vOp = "SWAPLEDGER"
+    51 :     Set : vMsg : ""
+    52 :     If : NOT (##SVCurrentCompany = ##vP1)
+    53 :         Set : vMsg : "Active company is '" + ##SVCurrentCompany + "', job is for '" + ##vP1 + "'"
+    54 :     End If
+    55 :     If : $$IsEmpty:##vMsg AND NOT $$IsObjectExists:Ledger:##vP4
+    56 :         Set : vMsg : "Ledger '" + ##vP4 + "' does not exist"
+    57 :     End If
+    58 :     If : $$IsEmpty:##vMsg
+                ;; The spec must be in a variable: New Object with an inline "ID:" + ... expression
+                ;; fails ("Could not create New object") - confirmed 2026-11-03.
+    59 :         Set : vSpec : "ID:" + ##vP2
+    60 :         New Object : Voucher : ##vSpec
+    61 :         Set Object
+    62 :         Set : vIdx : 0
+    63 :         Set : vHit : 0
+    64 :         Walk Collection : Ledger Entries
+    65 :             Set : vIdx : ##vIdx + 1
+    66 :             If : $LedgerName = ##vP3
+    67 :                 Set : vHit    : ##vHit + 1
+    68 :                 Set : vHitIdx : ##vIdx
+    69 :             End If
+    70 :         End Walk
+    71 :         If : NOT (##vHit = 1)
+    72 :             Set : vMsg : "Expected exactly 1 line with ledger '" + ##vP3 + "' on MasterID " + ##vP2 + ", found " + $$String:##vHit
+    73 :         End If
+    74 :     End If
+    75 :     If : $$IsEmpty:##vMsg
+    76 :         Set Target : LedgerEntries[##vHitIdx]
+    77 :         Set Value  : Ledger Name : ##vP4
+    78 :         Set Target : ..
+    79 :         Accept Alter
+    80 :         Set : vOK : $$LastResult
+    81 :         If : ##vOK
+    82 :             Set : vStatus : "OK"
+    83 :             Set : vMsg    : "MasterID " + ##vP2 + " line " + $$String:##vHitIdx + ": '" + ##vP3 + "' -> '" + ##vP4 + "'"
+    84 :         Else
+    85 :             Set : vMsg : "Accept Alter rejected MasterID " + ##vP2 + " (see tdlfunc.log)"
+    86 :         End If
+    87 :     End If
+    88 : End If
+
+    40 : Set : vResp : @@ZZMcpQueueDir + "response_" + ##vId + ".txt"
+    41 : Open File : ##vResp : Text : Write : UTF8
+    42 : Write File Line : ##vId
+    43 : Write File Line : ##vStatus
+    44 : Write File Line : ##vMsg
+    45 : Write File Line : "END"
+    46 : Close Target File
