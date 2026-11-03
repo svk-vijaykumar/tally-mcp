@@ -17,12 +17,12 @@ QUEUE_DIR = os.environ.get("TALLY_MCP_QUEUE_DIR", r"C:\TallyMCP\queue")
 BRIDGE_TIMEOUT = float(os.environ.get("TALLY_MCP_BRIDGE_TIMEOUT", "30"))
 
 # Companies the write tools may change, separated by ";". "*" (the default)
-# allows any open company; with a list, anything else is refused before a job
-# reaches Tally.
+# allows any open company; "none" turns writes off; with a list, anything else
+# is refused before a job reaches Tally.
 WRITE_COMPANIES = [
     c.strip()
     for c in os.environ.get("TALLY_MCP_WRITE_COMPANIES", "*").split(";")
-    if c.strip()
+    if c.strip() and c.strip().lower() != "none"
 ]
 
 # Every write appends two JSON lines here: the request with a before-snapshot

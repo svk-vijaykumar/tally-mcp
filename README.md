@@ -4,20 +4,37 @@ An MCP server that gives AI agents live access to the companies open in TallyPri
 
 Runs on Windows, on the same PC as TallyPrime (tested on TallyPrime 7.2).
 
-> **Write tools change live accounts.** By default the agent may alter vouchers in any open company. Set `TALLY_MCP_WRITE_COMPANIES` to a test company's name while you try it out, and keep a backup of your data.
+> **Write tools change live accounts.** The installer starts read-only. Allow writes for a test company first, and keep a backup of your data.
 
 ## Setup
 
-1. **Turn on Tally's HTTP server.** In TallyPrime: F1 (Help) > Settings > Connectivity > Client/Server configuration. Set *TallyPrime acts as* to **Both** or **Server**, and the port to **9000**.
-2. **Install [uv](https://docs.astral.sh/uv/getting-started/installation/)**, which fetches Python and the server for you:
+### Installer (recommended)
+
+1. Download [`install.cmd`](https://raw.githubusercontent.com/svk-vijaykumar/tally-mcp/main/install.cmd) (right-click > Save link as) and double-click it. If Windows warns about an unknown file, choose *More info > Run anyway*.
+2. Answer its questions. It:
+   - installs [uv](https://docs.astral.sh/uv/), which fetches Python and the server (nothing else needs to be installed first);
+   - asks whether the AI may change data: off (read only, the default), only the companies you name, or any open company;
+   - adds the server to Claude Desktop and Claude Code, whichever are installed, keeping your other settings;
+   - for write tools, downloads the bridge TDL to `C:\TallyMCP` and adds it to TallyPrime's `tally.ini` (it asks you to close TallyPrime first);
+   - checks that TallyPrime answers on port 9000.
+3. Restart Claude Desktop and ask: "check Tally status".
+
+Every file it changes is backed up first as `<name>.bak-<date-time>`. Run it again at any time to update to the latest version or change the write setting.
+
+If TallyPrime does not answer on port 9000, turn its server on: F1 (Help) > Settings > Connectivity > Client/Server configuration, *TallyPrime acts as* **Both**, port **9000**, then restart TallyPrime.
+
+### By hand
+
+1. Turn on Tally's server on port 9000, as above.
+2. Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
    ```powershell
    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
    ```
-3. **Add the server to your MCP client.**
+3. Add the server to your MCP client.
 
    **Claude Code:**
    ```powershell
-   claude mcp add tally -- uvx --from git+https://github.com/svk-vijaykumar/tally-mcp tally-mcp
+   claude mcp add tally --scope user -e TALLY_MCP_WRITE_COMPANIES=none -- uvx --from https://github.com/svk-vijaykumar/tally-mcp/archive/refs/heads/main.zip tally-mcp
    ```
 
    **Claude Desktop:** add this to `%APPDATA%\Claude\claude_desktop_config.json`, then restart Claude Desktop:
@@ -26,17 +43,15 @@ Runs on Windows, on the same PC as TallyPrime (tested on TallyPrime 7.2).
      "mcpServers": {
        "tally": {
          "command": "uvx",
-         "args": ["--from", "git+https://github.com/svk-vijaykumar/tally-mcp", "tally-mcp"],
-         "env": { "TALLY_URL": "http://localhost:9000" }
+         "args": ["--from", "https://github.com/svk-vijaykumar/tally-mcp/archive/refs/heads/main.zip", "tally-mcp"],
+         "env": { "TALLY_URL": "http://localhost:9000", "TALLY_MCP_WRITE_COMPANIES": "none" }
        }
      }
    }
    ```
 
    **Your own agents** (Agent SDK or another MCP client) start the same command over stdio.
-4. **Only if you want the write tools:** download [`tally/TallyMCPBridge.tdl`](tally/TallyMCPBridge.tdl), add it in TallyPrime under F1 > TDLs & Add-ons, and restart TallyPrime. See [Write tools](#write-tools).
-
-Read tools work after steps 1 to 3. Ask the agent to "check Tally status" to confirm it can reach Tally.
+4. For write tools: set `TALLY_MCP_WRITE_COMPANIES` (see [Settings](#settings-environment-variables)), add [`tally/TallyMCPBridge.tdl`](tally/TallyMCPBridge.tdl) in TallyPrime under F1 > TDLs & Add-ons, and restart TallyPrime. See [Write tools](#write-tools).
 
 ### Working on the code
 
@@ -86,7 +101,7 @@ A job the bridge never picks up is withdrawn, so it can't run later by surprise.
 | `TALLY_TIMEOUT` | `120` | Seconds per request |
 | `TALLY_MCP_DEFAULT_ROWS` | `100` | Rows per page when the agent doesn't give `limit` |
 | `TALLY_MCP_MAX_ROWS` | `1000` | Hard cap on rows per call |
-| `TALLY_MCP_WRITE_COMPANIES` | `*` | Companies writes may change: `*` for any open company, or names separated by `;` |
+| `TALLY_MCP_WRITE_COMPANIES` | `*` | Companies writes may change: `*` for any open company, `none` for read only, or names separated by `;` |
 | `TALLY_MCP_AUDIT_LOG` | `C:\TallyMCP\audit.jsonl` | Audit log of every write |
 | `TALLY_MCP_QUEUE_DIR` | `C:\TallyMCP\queue` | Bridge job folder (also hard-coded in the bridge TDL) |
 | `TALLY_MCP_BRIDGE_TIMEOUT` | `30` | Seconds to wait for a job's answer |
